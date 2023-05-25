@@ -14,8 +14,8 @@
     <Content Remove="Cards\welcomeCard.json" />
   </ItemGroup>
 
+ 
   
-
   <ItemGroup>
     <Content Include="Cards\Cards.lg">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

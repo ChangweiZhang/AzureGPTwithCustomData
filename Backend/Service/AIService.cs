@@ -9,6 +9,7 @@ using Backend.Model;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Serilog;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
@@ -20,6 +21,7 @@ namespace Backend.Service
     {
         private const string PromptTemplateFile = "Prompt.txt";
         private readonly ILogger<AIService> _logger;
+        private readonly IConfiguration configuration;
         private readonly OpenAIClient _azureOpenAIClient;
         private readonly OpenAIClient _openAIClient;
         private readonly SearchClient _searchClient;
@@ -35,9 +37,11 @@ namespace Backend.Service
             SearchClient searchClient,
             SearchIndexClient searchIndexClient,
             System.Net.Http.IHttpClientFactory httpClientFactory,
-            ILogger<AIService> logger)
+            ILogger<AIService> logger,
+            IConfiguration configuration)
         {
             _logger = logger;
+            this.configuration = configuration;
             var oiSettings = oiOptions.Value;
             var aoiSettings = aoiOptions.Value;
 
@@ -49,10 +53,10 @@ namespace Backend.Service
                 new Uri(aoiSettings.Endpoint),
                 new Azure.AzureKeyCredential(aoiSettings.ApiKey),
                 new OpenAIClientOptions());
-            _searchClient=searchClient;
-            _searchIndexClient=searchIndexClient;
-            _indexName=_searchClient.IndexName;
-            _collectionName=_searchClient.IndexName;
+            _searchClient = searchClient;
+            _searchIndexClient = searchIndexClient;
+            _indexName = _searchClient.IndexName;
+            _collectionName = _searchClient.IndexName;
             _qdrantClient = httpClientFactory.CreateClient("qdrant");
         }
 
@@ -93,7 +97,7 @@ namespace Backend.Service
                         }
                     },
 
-                    SemanticSettings= new SemanticSettings()
+                    SemanticSettings = new SemanticSettings()
                     {
                         Configurations =
                         {
@@ -118,10 +122,21 @@ namespace Backend.Service
 
         public async Task<Response<IndexDocumentsResult>> IndexDocumentsAsync(IEnumerable<Dictionary<string, string>> sections, IndexDocumentsOptions? options = null)
         {
-            var batch = IndexDocumentsBatch.Upload(sections);
-            var client = _searchIndexClient.GetSearchClient(_indexName);
-            var result = await client.IndexDocumentsAsync(batch, options);
-            return result;
+            try
+            {
+                if (!string.IsNullOrEmpty(configuration["SearchIndexClientSettings:Credential:Key"]))
+                {
+                    var batch = IndexDocumentsBatch.Upload(sections);
+                    var client = _searchIndexClient.GetSearchClient(_indexName);
+                    var result = await client.IndexDocumentsAsync(batch, options);
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+            return null;
         }
 
         /// <summary>
@@ -136,11 +151,11 @@ namespace Backend.Service
             string? internalEnglishQuestion = string.Empty;
             if (IsChinese(question))
             {
-                internalChineseQuestion=question;
+                internalChineseQuestion = question;
             }
             else
             {
-                internalEnglishQuestion=question;
+                internalEnglishQuestion = question;
             }
 
             string chinesePromptTemplate = string.Empty;
@@ -148,23 +163,23 @@ namespace Backend.Service
 
             string chinesePrompt = string.Empty;
             string englishPrompt = string.Empty;
-            if (history==null || history.Count==0)
+            if (history == null || history.Count == 0)
             {
                 chinesePromptTemplate = await GetTemplateContent("TranslateToChinesePrompt");
-                chinesePrompt= string.Format(chinesePromptTemplate, question);
+                chinesePrompt = string.Format(chinesePromptTemplate, question);
                 englishPromptTemplate = await GetTemplateContent("TranslateToEnglishPrompt");
-                englishPrompt= string.Format(englishPromptTemplate, question);
+                englishPrompt = string.Format(englishPromptTemplate, question);
             }
             else
             {
                 chinesePromptTemplate = await GetTemplateContent("ChineseSummaryPrompt");
-                chinesePrompt=string.Format(chinesePromptTemplate, string.Join("\n", history.Select(x => x.User + "\n" + x.Assistant)), question);
+                chinesePrompt = string.Format(chinesePromptTemplate, string.Join("\n", history.Select(x => x.User + "\n" + x.Assistant)), question);
                 englishPromptTemplate = await GetTemplateContent("EnglishSummaryPrompt");
-                englishPrompt=string.Format(englishPromptTemplate, string.Join("\n", history.Select(x => x.User + "\n" + x.Assistant)), question);
+                englishPrompt = string.Format(englishPromptTemplate, string.Join("\n", history.Select(x => x.User + "\n" + x.Assistant)), question);
             }
 
             var count = Math.Max(GetTokenCount(chinesePrompt), GetTokenCount(englishPrompt));
-            if (count>3000)
+            if (count > 3000)
             {
                 return (internalEnglishQuestion, internalChineseQuestion);
             }
@@ -172,20 +187,20 @@ namespace Backend.Service
 
             CompletionsOptions completionsOptions = new CompletionsOptions()
             {
-                Prompts  =
+                Prompts =
                         {
                             englishPrompt,
                             chinesePrompt
                         },
-                Temperature=0.2f,
-                MaxTokens=256,
-                FrequencyPenalty=0,
-                PresencePenalty=0,
+                Temperature = 0.2f,
+                MaxTokens = 256,
+                FrequencyPenalty = 0,
+                PresencePenalty = 0,
             };
-            var deploymentOrModelName = "text-davinci-003";
+            var deploymentOrModelName = configuration["CompletiongModel"] ?? "text-davinci-003";
             var result = _azureOpenAIClient.GetCompletions(deploymentOrModelName, completionsOptions);
-            internalEnglishQuestion = result?.Value?.Choices?[0]?.Text??internalEnglishQuestion;
-            internalChineseQuestion = result?.Value?.Choices?[1]?.Text??internalChineseQuestion;
+            internalEnglishQuestion = result?.Value?.Choices?[0]?.Text ?? internalEnglishQuestion;
+            internalChineseQuestion = result?.Value?.Choices?[1]?.Text ?? internalChineseQuestion;
 
             _logger.LogInformation($"internalEnglishQuestion:{internalEnglishQuestion},internalChineseQuestion:{internalChineseQuestion}");
             return (internalEnglishQuestion.Trim(), internalChineseQuestion.Trim());
@@ -202,13 +217,13 @@ namespace Backend.Service
             var options = new SearchOptions
             {
                 IncludeTotalCount = false,
-                QueryType=SearchQueryType.Semantic,
-                QueryLanguage=language,
-                SemanticConfigurationName="default",
-                Size=3
+                QueryType = SearchQueryType.Semantic,
+                QueryLanguage = language,
+                SemanticConfigurationName = "default",
+                Size = 3
             };
             var results = new List<string>();
-            if (language==QueryLanguage.ZhCn)
+            if (language == QueryLanguage.ZhCn)
             {
                 var searchResponse = await _searchClient.SearchAsync<KbArticleCn>(question, options);
                 foreach (var item in searchResponse.Value.GetResults())
@@ -217,11 +232,11 @@ namespace Backend.Service
                     {
                         break;
                     }
-                    if (item.RerankerScore<0.8)
+                    if (item.RerankerScore < 0.8)
                     {
                         continue;
                     }
-                    results.Add(item.Document?.SourcePage+":"+item.Document?.Content?.Replace("\n", "").Replace("\r", ""));
+                    results.Add(item.Document?.SourcePage + ":" + item.Document?.Content?.Replace("\n", "").Replace("\r", ""));
                 }
             }
             else
@@ -233,15 +248,15 @@ namespace Backend.Service
                     {
                         break;
                     }
-                    if (item.RerankerScore<0.8)
+                    if (item.RerankerScore < 0.8)
                     {
                         continue;
                     }
-                    results.Add(item.Document?.SourcePage+":"+item.Document?.Content?.Replace("\n", "").Replace("\r", ""));
+                    results.Add(item.Document?.SourcePage + ":" + item.Document?.Content?.Replace("\n", "").Replace("\r", ""));
                 }
             }
 
-            if (results.Count>0)
+            if (results.Count > 0)
             {
                 var content = string.Join("\n", results);
                 return content;
@@ -253,9 +268,9 @@ namespace Backend.Service
         {
             var language = QueryLanguage.EnUs;
             var fileNameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
-            if (fileNameWithoutExt.Substring(fileNameWithoutExt.Length - 3)=="-cn")
+            if (fileNameWithoutExt.Substring(fileNameWithoutExt.Length - 3) == "-cn")
             {
-                language=QueryLanguage.ZhCn;
+                language = QueryLanguage.ZhCn;
             }
 
             var filter = string.IsNullOrEmpty(fileName) ? null : $"sourcefile eq '{Path.GetFileName(fileName)}'";
@@ -263,11 +278,11 @@ namespace Backend.Service
             var options = new SearchOptions
             {
                 IncludeTotalCount = true,
-                QueryLanguage=language,
-                Filter=filter
+                QueryLanguage = language,
+                Filter = filter
             };
             var client = _searchIndexClient.GetSearchClient(_indexName);
-            if (language==QueryLanguage.ZhCn)
+            if (language == QueryLanguage.ZhCn)
             {
                 var results = await _searchClient.SearchAsync<KbArticleCn>("*", options);
                 var documents = results.Value.GetResultsAsync();
@@ -305,7 +320,7 @@ namespace Backend.Service
             int count = 0;
             var messages = new List<ChatMessage>();
             var prefix = string.Empty;
-            if (style==null)
+            if (style == null)
             {
                 prefix = needRefContent ? await GetTemplateContent("ChatGPTLocalContent") : await GetTemplateContent("ChatGPTGeneral");
 
@@ -313,52 +328,52 @@ namespace Backend.Service
                 {
                     return answer;
                 }
-                prefix=needRefContent ? string.Format(prefix+"\n", refContent) : prefix;
+                prefix = needRefContent ? string.Format(prefix + "\n", refContent) : prefix;
             }
             else
             {
-                prefix=await GetTemplateContent(style);
-                if (style=="Coder")
+                prefix = await GetTemplateContent(style);
+                if (style == "Coder")
                 {
-                    temperature=0.2f;
+                    temperature = 0.2f;
                 }
-                else if (style=="Sales")
+                else if (style == "Sales")
                 {
-                    temperature=1.0f;
+                    temperature = 1.0f;
                 }
-                else if (style=="Translator")
+                else if (style == "Translator")
                 {
-                    temperature=0.2f;
+                    temperature = 0.2f;
                 }
             }
 
             messages.Add(new Azure.AI.OpenAI.ChatMessage(ChatRole.System, prefix));
             var historyString = string.Empty;
-            for (var i = history.Count-1; i>=0; i--)
+            for (var i = history.Count - 1; i >= 0; i--)
             {
-                count = GetTokenCount(prefix+historyString+history[i].Assistant+history[i].User+question);
+                count = GetTokenCount(prefix + historyString + history[i].Assistant + history[i].User + question);
 
-                if (count>3000)
+                if (count > 3000)
                 {
                     break;
                 }
                 messages.Insert(1, new Azure.AI.OpenAI.ChatMessage(ChatRole.Assistant, history[i].Assistant));
                 messages.Insert(1, new Azure.AI.OpenAI.ChatMessage(ChatRole.User, history[i].User));
-                historyString+=history[i].User+history[i].Assistant;
+                historyString += history[i].User + history[i].Assistant;
             }
             messages.Add(new ChatMessage(ChatRole.User, question));
-            count= GetTokenCount(string.Join("\n", messages.SelectMany(x => new[] { x.Role+x.Content })));
-            if (count>4000)
+            count = GetTokenCount(string.Join("\n", messages.SelectMany(x => new[] { x.Role + x.Content })));
+            if (count > 4000)
             {
                 return "What you said is too long, please take your time.";
             }
-            var deploymentOrModelName = "gpt-35-turbo";
+            var deploymentOrModelName = configuration["ChatModel"] ?? "gpt-35-turbo";
             var chatCompletionsOptions = new ChatCompletionsOptions()
             {
-                Temperature=temperature,
-                MaxTokens=4020-count,
-                FrequencyPenalty=0,
-                PresencePenalty=0
+                Temperature = temperature,
+                MaxTokens = 4020 - count,
+                FrequencyPenalty = 0,
+                PresencePenalty = 0
             };
             foreach (var message in messages)
             {
@@ -367,7 +382,7 @@ namespace Backend.Service
 
             var completionResult = await _azureOpenAIClient.GetChatCompletionsAsync(deploymentOrModelName, chatCompletionsOptions);
 
-            answer = completionResult?.Value?.Choices?.FirstOrDefault()?.Message.Content??string.Empty;
+            answer = completionResult?.Value?.Choices?.FirstOrDefault()?.Message.Content ?? string.Empty;
 
             return answer;
         }
@@ -393,34 +408,34 @@ namespace Backend.Service
             }
             int count = 0;
             var messages = new List<ChatMessage>();
-            prefix=needRefContent ? string.Format(prefix+"\n", refContent) : prefix;
+            prefix = needRefContent ? string.Format(prefix + "\n", refContent) : prefix;
             messages.Add(new Azure.AI.OpenAI.ChatMessage(ChatRole.System, prefix));
             var historyString = string.Empty;
-            for (var i = history.Count-1; i>=0; i--)
+            for (var i = history.Count - 1; i >= 0; i--)
             {
-                count = GetTokenCount(prefix+historyString+history[i].Assistant+history[i].User+question);
+                count = GetTokenCount(prefix + historyString + history[i].Assistant + history[i].User + question);
 
-                if (count>3000)
+                if (count > 3000)
                 {
                     break;
                 }
                 messages.Insert(1, new Azure.AI.OpenAI.ChatMessage(ChatRole.Assistant, history[i].Assistant));
                 messages.Insert(1, new Azure.AI.OpenAI.ChatMessage(ChatRole.User, history[i].User));
-                historyString+=history[i].User+history[i].Assistant;
+                historyString += history[i].User + history[i].Assistant;
             }
             messages.Add(new ChatMessage(ChatRole.User, question));
-            count= GetTokenCount(string.Join("\n", messages.SelectMany(x => new[] { x.Role+x.Content })));
-            if (count>4000)
+            count = GetTokenCount(string.Join("\n", messages.SelectMany(x => new[] { x.Role + x.Content })));
+            if (count > 4000)
             {
                 return null;
             }
-            var deploymentOrModelName = "gpt-35-turbo";
+            var deploymentOrModelName = configuration["ChatModel"] ?? "gpt-35-turbo";
             var chatCompletionsOptions = new ChatCompletionsOptions()
             {
-                Temperature=0.5f,
-                MaxTokens=4020-count,
-                FrequencyPenalty=0,
-                PresencePenalty=0
+                Temperature = 0.5f,
+                MaxTokens = 4020 - count,
+                FrequencyPenalty = 0,
+                PresencePenalty = 0
             };
             foreach (var message in messages)
             {
@@ -454,7 +469,7 @@ namespace Backend.Service
             string newContent = Regex.Replace(content, pattern, replacement);
 
             var embeddingsRequest = new EmbeddingsOptions(newContent);
-            var deploymentOrModelName = "text-embedding-ada-002";
+            var deploymentOrModelName = configuration["EmbeddingModel"] ?? "text-embedding-ada-002";
 
             Response<Embeddings> response = await _azureOpenAIClient.GetEmbeddingsAsync(deploymentOrModelName, embeddingsRequest);
             return response.Value.Data[0].Embedding;
@@ -529,7 +544,7 @@ namespace Backend.Service
 
                             if (name == templateName)
                             {
-                                return content+"\n";
+                                return content + "\n";
                             }
                         }
                     }
@@ -562,24 +577,24 @@ namespace Backend.Service
         public async Task<bool> CreateCollectionAsync()
         {
             return await CreateCollectionAsync(
-                _collectionName, 
-                new VectorType() { Size=1536, Distance="Cosine" });
-            
+                _collectionName,
+                new VectorType() { Size = 1536, Distance = "Cosine" });
+
         }
 
 
         private async Task<bool> CreateCollectionAsync(string collectionName, VectorType vector)
         {
             var collectionInfo = await GetCollectionInfoAsync(collectionName);
-            if(collectionInfo == null )
+            if (collectionInfo == null)
             {
-                var model= new CollectionCreateModel() 
+                var model = new CollectionCreateModel()
                 {
                     Vectors = vector
                 };
 
                 var result = await _qdrantClient.PutAsync($"/collections/{collectionName}",
-                        new StringContent(JsonConvert.SerializeObject(model),Encoding.UTF8, "application/json"));
+                        new StringContent(JsonConvert.SerializeObject(model), Encoding.UTF8, "application/json"));
                 if (result.IsSuccessStatusCode)
                 {
                     return true;
@@ -606,10 +621,10 @@ namespace Backend.Service
             {
                 var model = new DbPointsCreateModel()
                 {
-                    Points=points
+                    Points = points
                 };
                 var result = await _qdrantClient.PutAsync($"collections/{collectionName}/points?wait={wait.ToString().ToLower()}",
-                    new StringContent(JsonConvert.SerializeObject(model),Encoding.UTF8, "application/json"));
+                    new StringContent(JsonConvert.SerializeObject(model), Encoding.UTF8, "application/json"));
                 if (result.IsSuccessStatusCode)
                 {
                     return true;
@@ -624,9 +639,9 @@ namespace Backend.Service
 
         public async Task<ScrollPointsResponse?> ScrollPointsAsync(ScrollPointsRequest request)
         {
-            
+
             var response = await _qdrantClient.PostAsync($"collections/{_collectionName}/points/scroll",
-                new StringContent(JsonConvert.SerializeObject(request),Encoding.UTF8, "application/json"));
+                new StringContent(JsonConvert.SerializeObject(request), Encoding.UTF8, "application/json"));
 
             if (response.IsSuccessStatusCode)
             {
@@ -657,34 +672,34 @@ namespace Backend.Service
             };
             int? nextPageOffset = null;
 
-        try
-        {
-            var ids=new List<string>();
-            while (true)
+            try
             {
-                if (nextPageOffset.HasValue)
+                var ids = new List<string>();
+                while (true)
                 {
-                    scrollRequest.Limit = nextPageOffset.Value;
-                }
+                    if (nextPageOffset.HasValue)
+                    {
+                        scrollRequest.Limit = nextPageOffset.Value;
+                    }
 
-                var scrollResponse = await ScrollPointsAsync(scrollRequest);
-                if(scrollResponse?.Result!=null && scrollResponse.Result.Points.Count!=0)
-                {
-                    ids.AddRange(scrollResponse.Result.Points.Select(x => x.Id));
-                }
-                if (scrollResponse?.Result?.NextPageOffset == null)
-                {
-                    break;
-                }
+                    var scrollResponse = await ScrollPointsAsync(scrollRequest);
+                    if (scrollResponse?.Result != null && scrollResponse.Result.Points.Count != 0)
+                    {
+                        ids.AddRange(scrollResponse.Result.Points.Select(x => x.Id));
+                    }
+                    if (scrollResponse?.Result?.NextPageOffset == null)
+                    {
+                        break;
+                    }
 
-                nextPageOffset = scrollResponse.Result.NextPageOffset;
+                    nextPageOffset = scrollResponse.Result.NextPageOffset;
+                }
+                await DeletePoints(_collectionName, ids);
             }
-            await DeletePoints(_collectionName, ids);
-        }
-        catch (Exception)
-        {
-            
-        }
+            catch (Exception)
+            {
+
+            }
         }
         private async Task<bool> DeletePoints(string collectionName, List<string> ids)
         {
@@ -692,10 +707,10 @@ namespace Backend.Service
             {
                 var model = new DbPointsDeleteModel()
                 {
-                    Points=ids
+                    Points = ids
                 };
                 var result = await _qdrantClient.PostAsync($"collections/{collectionName}/points/delete",
-                    new StringContent(JsonConvert.SerializeObject(model),Encoding.UTF8, "application/json"));
+                    new StringContent(JsonConvert.SerializeObject(model), Encoding.UTF8, "application/json"));
                 if (result.IsSuccessStatusCode)
                 {
                     return true;
@@ -713,25 +728,25 @@ namespace Backend.Service
             var points = new List<DbPoint>();
             //get section's content and source file. calulate embedding of content and generate 
             //a vector as point. batch upload the points to qdrant db.
-            foreach(var section in sections)
+            foreach (var section in sections)
             {
                 var content = string.Empty;
                 var fileNameWithoutExt = Path.GetFileNameWithoutExtension(section["sourcefile"]);
                 if (fileNameWithoutExt.EndsWith("-cn"))
                 {
-                    content=section["content_cn"];
+                    content = section["content_cn"];
                 }
                 else
                 {
-                    content=section["content_en"];
+                    content = section["content_en"];
                 }
-                
-                var embedding= await GetEmbeddingAsync(content);
+
+                var embedding = await GetEmbeddingAsync(content);
                 List<double> doubleList = embedding.Select(f => (double)f).ToList();
                 points.Add(new DbPoint()
                 {
-                    Vector=(List<double>)doubleList,
-                    Payload=new Dictionary<string, string>()
+                    Vector = (List<double>)doubleList,
+                    Payload = new Dictionary<string, string>()
                     {
                         { "Id", section["id"] },
                         { "SourceFile",section["sourcefile"] },
@@ -742,7 +757,7 @@ namespace Backend.Service
                     }
                 });
             }
-            if(points.Count>0)
+            if (points.Count > 0)
             {
                 return await CreatePoints(_collectionName, points);
             }
@@ -751,7 +766,7 @@ namespace Backend.Service
 
 
 
-        public async Task<List<SearchResult>> SearchVectorAsync( string content)
+        public async Task<List<SearchResult>> SearchVectorAsync(string content)
         {
             var embeddingResult = await GetEmbeddingAsync(content);
             List<double> doubleList = embeddingResult.Select(f => (double)f).ToList();
@@ -778,14 +793,14 @@ namespace Backend.Service
             if (response.IsSuccessStatusCode)
             {
                 var responseContent = await response.Content.ReadAsStringAsync();
-                var result=JsonConvert.DeserializeObject<SearchVectorResponse>(responseContent);
-                if(result!=null && result.Result!=null)
+                var result = JsonConvert.DeserializeObject<SearchVectorResponse>(responseContent);
+                if (result != null && result.Result != null)
                 {
-                    return result.Result??new List<SearchResult>();
+                    return result.Result ?? new List<SearchResult>();
 
                 }
             }
-            
+
             return new List<SearchResult>();
         }
 

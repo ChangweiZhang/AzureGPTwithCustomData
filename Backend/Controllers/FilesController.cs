@@ -24,12 +24,12 @@ namespace WebApi.Controllers
 
         private readonly ILogger<FilesController> _logger;
         private readonly AIService _aiService;
-        private readonly string _localFolder = @".\data";
+        private readonly string _localFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
         public FilesController(
             AIService aiService,
             ILogger<FilesController> logger)
         {
-            _aiService= aiService;
+            _aiService = aiService;
             _logger = logger;
             if (!Directory.Exists(_localFolder))
             {
@@ -280,12 +280,12 @@ namespace WebApi.Controllers
             var contentName = "content_en";
             var language = "en";
             var fileNameWithoutExt = Path.GetFileNameWithoutExtension(filename);
-            if (fileNameWithoutExt.Substring(fileNameWithoutExt.Length - 3)=="-cn")
+            if (fileNameWithoutExt.Substring(fileNameWithoutExt.Length - 3) == "-cn")
             {
-                contentName="content_cn";
-                language="cn";
+                contentName = "content_cn";
+                language = "cn";
             }
-            if (language=="cn")
+            if (language == "cn")
             {
                 foreach ((string section, int pagenum) in SplitChineseText(pages))
                 {
@@ -345,7 +345,7 @@ namespace WebApi.Controllers
                     // If the current string is not the first one, add the separator to the previous string
                     if (i > 0)
                     {
-                        if ((sentenseOutput+split[i]).Length>MaxStringLength)
+                        if ((sentenseOutput + split[i]).Length > MaxStringLength)
                         {
                             break;
                         }
@@ -353,26 +353,26 @@ namespace WebApi.Controllers
                         //it's a section break;
                         if (split[i].EndsWith('\n'))
                         {
-                            sectionOutput=sentenseOutput+split[i];
-                            sectionIndex=i;
+                            sectionOutput = sentenseOutput + split[i];
+                            sectionIndex = i;
                         }
                     }
 
-                    sentenseOutput+=split[i];
-                    sentenseIndex=i;
+                    sentenseOutput += split[i];
+                    sentenseIndex = i;
 
                 }
             }
 
-            if (sectionOutput.Length>MinStringLength)
+            if (sectionOutput.Length > MinStringLength)
             {
-                return (sectionOutput, string.Join(" ", split, sectionIndex+1, split.Length-sectionIndex-1));
+                return (sectionOutput, string.Join(" ", split, sectionIndex + 1, split.Length - sectionIndex - 1));
             }
             else
             {
-                if (sentenseOutput.Length>MinStringLength)
+                if (sentenseOutput.Length > MinStringLength)
                 {
-                    return (sentenseOutput, string.Join(" ", split, sentenseIndex+1, split.Length-sentenseIndex-1));
+                    return (sentenseOutput, string.Join(" ", split, sentenseIndex + 1, split.Length - sentenseIndex - 1));
                 }
                 else
                 {
@@ -452,7 +452,6 @@ namespace WebApi.Controllers
         [Route("list")]
         public async Task<IActionResult> List([FromBody] ListModel listModel)
         {
-            await Task.CompletedTask;
             _logger.Enter();
             try
             {
@@ -499,7 +498,7 @@ namespace WebApi.Controllers
         public async Task<IActionResult> List()
         {
             _logger.Enter();
-            return await List(new ListModel() { Prefix=""});
+            return await List(new ListModel() { Prefix = "" });
         }
 
 
@@ -507,7 +506,7 @@ namespace WebApi.Controllers
         [Route("delete")]
         public async Task<IActionResult> Delete([FromBody] DeleteModel deleteModel)
         {
-            await Task.CompletedTask;
+          
             _logger.Enter();
             try
             {

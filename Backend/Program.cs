@@ -196,7 +196,10 @@ namespace Backend
                 AllowAnyHeader();
             });
 
-            app.UseDefaultFiles();
+             var df = new DefaultFilesOptions();
+            // these options are not necessary index.html is added by default
+            df.DefaultFileNames.Add("index.html");
+            app.UseDefaultFiles(df);
 
             app.UseStaticFiles();
 

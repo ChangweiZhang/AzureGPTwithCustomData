@@ -6,7 +6,7 @@ import Admin from "./pages/Admin/Admin";
 import NoPage from "./pages/NoPage/NoPage";
 import Chat from "./pages/Chat/Chat"
 import { Container, Box, Grid, TextField, Typography, Button } from '@mui/material';
-
+const API_URL = process.env.REACT_APP_DOTNET_API_PATH;
 const Pages = () => {
     return (
         <Routes>
@@ -18,7 +18,10 @@ const Pages = () => {
         </Routes>
     )
 }
+function toBase64(input: string): string {
 
+    return btoa(input);
+}
 const App = (props: any) => {
     const { pca } = props;
     const [isLogin, setIsLogin] = useState(false)
@@ -26,9 +29,20 @@ const App = (props: any) => {
     const [password, setPassword] = useState('');
 
 
-    const onLogin = () => {
-        if (userName === "admin" && password === "Microsoft123.") {
+    const onLogin = async () => {
+
+        const response = await fetch(API_URL+"/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                Authorization: toBase64( userName + ':' + password)
+            }),
+        });
+
+        if (response.ok) {
             setIsLogin(true);
+        } else {
+            console.error("Failed to send selected value to Flask.");
         }
     }
     const onUserNameChange = (
