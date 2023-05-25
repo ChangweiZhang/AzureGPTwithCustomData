@@ -29,7 +29,7 @@ namespace Backend.Controllers
 
 
         [HttpPost]
-        public async Task<ActionResult<object>> PostAync([FromBody] LoginViewModel vm)
+        public ActionResult<object> Post([FromBody] LoginViewModel vm)
         {
             if (!ModelState.IsValid)
             {
